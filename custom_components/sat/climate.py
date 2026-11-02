@@ -324,9 +324,10 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         await self._restore_previous_state_or_set_defaults()
 
         # Update a heating curve if outside temperature is available
-        if self.current_outside_temperature is not None and self.target_temperature is not None:
-            self.areas.heating_curves.update(self.current_outside_temperature)
-            self.heating_curve.update(self.target_temperature, self.current_outside_temperature)
+        outside_temperature = self.current_outside_temperature
+        if outside_temperature is not None and self.target_temperature is not None:
+            self.areas.heating_curves.update(outside_temperature)
+            self.heating_curve.update(self.target_temperature, outside_temperature)
 
         self.async_on_remove(async_at_started(self.hass, self._async_started))
 
@@ -377,7 +378,11 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
 
         ages = [
             state_age_seconds(state)
-            for entity_id in (self.inside_sensor_entity_id, self.humidity_sensor_entity_id)
+            for entity_id in (
+                self.inside_sensor_entity_id,
+                self.humidity_sensor_entity_id,
+                *self.outside_sensor_entities,
+            )
             if entity_id is not None
             and (state := self.hass.states.get(entity_id)) is not None
             and not is_state_stale(state, self._sensor_max_value_age)
@@ -670,14 +675,21 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         self.outside_sensor_entities.sort(key=lambda x: "sensor" not in x)
         for entity_id in self.outside_sensor_entities:
             state = self.hass.states.get(entity_id)
-            if state is None or state.state in [STATE_UNKNOWN, STATE_UNAVAILABLE]:
+            if (
+                state is None
+                or state.state in [STATE_UNKNOWN, STATE_UNAVAILABLE]
+                or is_state_stale(state, self._sensor_max_value_age)
+            ):
                 continue
 
             if sensor.DOMAIN in entity_id and (value := float_value(state.state)) is not None:
                 return value
 
-            if weather.DOMAIN in entity_id:
-                return float_value(state.attributes.get("temperature"))
+            if (
+                weather.DOMAIN in entity_id
+                and (value := float_value(state.attributes.get("temperature"))) is not None
+            ):
+                return value
 
         return None
 
@@ -1004,7 +1016,8 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         self._async_update_sensor_values()
 
         # We can't continue if we don't have a valid outside temperature
-        if self.current_outside_temperature is None:
+        outside_temperature = self.current_outside_temperature
+        if outside_temperature is None:
             return
 
         # Reset the PID controller if the sensor data is too old
@@ -1020,8 +1033,8 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
 
         # Make sure we use the latest heating curve value
         if self.target_temperature is not None:
-            self.areas.heating_curves.update(self.current_outside_temperature)
-            self.heating_curve.update(self.target_temperature, self.current_outside_temperature)
+            self.areas.heating_curves.update(outside_temperature)
+            self.heating_curve.update(self.target_temperature, outside_temperature)
 
         # Update the PID controller with the maximum error
         if not reset:
@@ -1034,7 +1047,7 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
                 self.heating_curve.autotune(
                     setpoint=self.requested_setpoint,
                     target_temperature=self.target_temperature,
-                    outside_temperature=self.current_outside_temperature,
+                    outside_temperature=outside_temperature,
                 )
 
             # Update our PID controllers if we have valid values
@@ -1213,10 +1226,11 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
                 self.pid.reset()
                 self.areas.pids.reset()
 
+            outside_temperature = self.current_outside_temperature
             if (
                 self.current_temperature is None
                 or self.target_temperature is None
-                or self.current_outside_temperature is None
+                or outside_temperature is None
             ):
                 if self._inputs_missing_since is None:
                     self._inputs_missing_since = dt_util.utcnow()
@@ -1241,11 +1255,23 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
                     self._setpoint = None
                     self._inputs_missing_released = True
                     await self._coordinator.async_release_control()
+                    self.async_write_ha_state()
 
                 return
 
+            # The PID timers kept aging while the boiler was handed back,
+            # and the integral would apply the current error to the whole outage
+            if self._inputs_missing_released:
+                self.pid.reset()
+                self.areas.pids.reset()
+                self._async_control_pid(reset=True)
+
             self._inputs_missing_since = None
             self._inputs_missing_released = False
+
+            # An outside source that goes stale fires no state change
+            self.areas.heating_curves.update(outside_temperature)
+            self.heating_curve.update(self.target_temperature, outside_temperature)
 
             # Control the heating through the coordinator
             await self._coordinator.async_control_heating_loop(pwm_state=self.pwm.state)
