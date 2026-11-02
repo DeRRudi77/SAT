@@ -490,16 +490,24 @@ async def test_a_gateway_outage_does_not_end_a_burn(
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
-@pytest.mark.parametrize("retain", [False, True], ids=["reboot", "replay"])
+@pytest.mark.parametrize(
+    ("previous", "retain"),
+    [("offline", False), ("online", False), ("offline", True), ("online", True)],
+    ids=["reboot-after-will", "reboot-after-clean-disconnect", "replay-offline", "replay-online"],
+)
 async def test_gateway_reboot_restores_the_overrides(
-    hass: HomeAssistant, mqtt_mock: MqttMockHAClient, freezer: FrozenDateTimeFactory, retain: bool
+    hass: HomeAssistant,
+    mqtt_mock: MqttMockHAClient,
+    freezer: FrozenDateTimeFactory,
+    previous: str,
+    retain: bool,
 ) -> None:
     entry = await setup_heating(hass, mqtt_mock, {CONF_PUSH_SETPOINT_TO_THERMOSTAT: True})
     coordinator = entry.runtime_data.coordinator
     modulation = entry.runtime_data.climate.relative_modulation_value
     await coordinator.async_set_control_hot_water_setpoint(50)
 
-    async_fire_mqtt_message(hass, AVAILABILITY_TOPIC, "offline")
+    async_fire_mqtt_message(hass, AVAILABILITY_TOPIC, previous)
     await hass.async_block_till_done()
     mqtt_mock.async_publish.reset_mock()
     async_fire_mqtt_message(hass, AVAILABILITY_TOPIC, "online", retain=retain)
