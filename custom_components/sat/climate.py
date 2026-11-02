@@ -670,7 +670,11 @@ class SatClimate(SatEntity, ClimateEntity, RestoreEntity):
         self.outside_sensor_entities.sort(key=lambda x: "sensor" not in x)
         for entity_id in self.outside_sensor_entities:
             state = self.hass.states.get(entity_id)
-            if state is None or state.state in [STATE_UNKNOWN, STATE_UNAVAILABLE]:
+            if (
+                state is None
+                or state.state in [STATE_UNKNOWN, STATE_UNAVAILABLE]
+                or is_state_stale(state, self._sensor_max_value_age)
+            ):
                 continue
 
             if sensor.DOMAIN in entity_id and (value := float_value(state.state)) is not None:

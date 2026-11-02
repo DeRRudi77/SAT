@@ -402,6 +402,38 @@ async def test_a_non_numeric_outside_sensor_falls_back_to_the_next_entity(
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
+async def test_a_stale_outside_sensor_falls_back_to_the_next_entity(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    hass.states.async_set("sensor.outdoor", "9.9")
+    hass.states.async_set("weather.home", "sunny", {"temperature": 4.0})
+    entry = await setup_rooms(
+        hass, {CONF_OUTSIDE_SENSOR_ENTITY_ID: ["sensor.outdoor", "weather.home"]}
+    )
+    climate = entry.runtime_data.climate
+    assert climate.current_outside_temperature == 9.9
+
+    freezer.tick(timedelta(hours=7))
+    hass.states.async_set("weather.home", "sunny", {"temperature": 4.0}, force_update=True)
+
+    assert climate.current_outside_temperature == 4.0
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_outside_temperature_is_missing_until_a_stale_sensor_reports_again(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    entry = await setup_rooms(hass)
+    climate = entry.runtime_data.climate
+
+    freezer.tick(timedelta(hours=7))
+    assert climate.current_outside_temperature is None
+
+    hass.states.async_set("sensor.test_outside_sensor", "9.9")
+    assert climate.current_outside_temperature == 9.9
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
 async def test_a_room_target_change_keeps_the_pwm_phase(
     hass: HomeAssistant, freezer: FrozenDateTimeFactory
 ) -> None:
