@@ -245,7 +245,6 @@ class SatOpenThermMqttCoordinator(SatMqttCoordinator):
         )
 
     async def _async_availability_changed(self, message: mqtt.ReceiveMessage) -> None:
-        was_online = self._online
         self._online = online = message.payload == "online"
 
         if not online:
@@ -254,8 +253,8 @@ class SatOpenThermMqttCoordinator(SatMqttCoordinator):
             return
 
         # A live "online" is an ESP boot or reconnect; the ESP boot resets the PIC, which drops
-        # every override
-        if was_online is True or message.retain:
+        # every override. A planned restart disconnects cleanly, so no "offline" comes before it.
+        if message.retain:
             return
 
         self._stale_keys = set(self.data)
