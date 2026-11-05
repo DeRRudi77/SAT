@@ -75,7 +75,8 @@ class Flame:
     # Debounce
     MEDIAN_TOLERANCE: float = 0.9
     MIN_ON_SAMPLES_FOR_HEALTH: int = 3
-    MAX_DOMESTIC_HOT_WATER_IDLE_OFF_SECONDS: float = 30.0
+    # A hot water run pauses the flame while the flow cools from its peak, 42 s seen on a Remeha
+    MAX_DOMESTIC_HOT_WATER_IDLE_OFF_SECONDS: float = 120.0
 
     # Status buckets
     _TRANSIENT_STATUSES: Iterable[BoilerStatus] = (
@@ -383,7 +384,18 @@ class Flame:
             # A burn that ends while PWM is still ON was ended by the boiler, not by PWM
             pwm = self._fresh_pulse_width_modulation_state(now)
             if self._pwm_planned_on_seconds is not None and pwm is not None:
-                cut_short = pwm.status == PWMStatus.ON and duration < self._pwm_planned_on_seconds
+                # A flow above the cut-out at ignition is residual heat, not an ignition spike
+                lit_above_cut_out = (
+                    self._burn_ignition_flow is not None
+                    and self._burn_highest_setpoint is not None
+                    and self._burn_ignition_flow
+                    > self._burn_highest_setpoint + self.IGNITION_OVERSHOOT_MARGIN
+                )
+                cut_short = (
+                    pwm.status == PWMStatus.ON
+                    and duration < self._pwm_planned_on_seconds
+                    and not lit_above_cut_out
+                )
                 self._pwm_burns_cut_short.append((now, cut_short))
 
                 if (
