@@ -485,6 +485,26 @@ def test_a_burn_lit_above_the_cut_out_is_not_cut_short(
     assert flame.cut_short_burn_ends == ()
 
 
+@pytest.mark.parametrize("cycles", [1, 3], ids=["thin_history", "full_history"])
+@pytest.mark.parametrize(
+    ("off_seconds", "status_is_stuck"), [(60, False), (130, True)], ids=["pause", "stuck"]
+)
+def test_a_flame_pause_during_hot_water_is_not_stuck_off(
+    freezer: FrozenDateTimeFactory, cycles: int, off_seconds: int, status_is_stuck: bool
+) -> None:
+    flame = Flame()
+    for _ in range(cycles):
+        run_cycle(flame, freezer, 300)
+
+    flame.update(boiler_state(True, hot_water=True))
+    freezer.tick(timedelta(seconds=30))
+    flame.update(boiler_state(False, hot_water=True))
+    freezer.tick(timedelta(seconds=off_seconds))
+    flame.update(boiler_state(False, hot_water=True))
+
+    assert (flame.health_status == FlameStatus.STUCK_OFF) is status_is_stuck
+
+
 def test_a_heating_burn_right_after_a_hot_water_burn_is_judged_as_heating(
     freezer: FrozenDateTimeFactory, caplog: pytest.LogCaptureFixture
 ) -> None:

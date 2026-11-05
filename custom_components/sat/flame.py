@@ -75,7 +75,8 @@ class Flame:
     # Debounce
     MEDIAN_TOLERANCE: float = 0.9
     MIN_ON_SAMPLES_FOR_HEALTH: int = 3
-    MAX_DOMESTIC_HOT_WATER_IDLE_OFF_SECONDS: float = 30.0
+    # A hot water run pauses the flame while the flow cools from its peak, 42 s seen on a Remeha
+    MAX_DOMESTIC_HOT_WATER_IDLE_OFF_SECONDS: float = 120.0
 
     # Status buckets
     _TRANSIENT_STATUSES: Iterable[BoilerStatus] = (
